@@ -1,6 +1,6 @@
 # KeepItNew
 
-Customizable terminal app and desktop widget. MIT licensed. Public releases start without personal data.
+Update Arch, AUR and Flatpak packages, clean up disk space, and track updates from your desktop bar.
 
 ## Install
 
