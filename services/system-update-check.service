@@ -1,0 +1,8 @@
+[Unit]
+Description=KeepItNew background Arch, AUR, and Flatpak update check
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/system-update --check
+TimeoutStartSec=240
+Nice=10

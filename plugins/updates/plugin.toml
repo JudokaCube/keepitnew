@@ -1,0 +1,10 @@
+id = "nord-desktop/updates"
+name = "KeepItNew"
+version = "1.0.0"
+plugin_api = 32
+author = "jdkcube"
+description = "Combined Arch, AUR, and Flatpak update count"
+icon = "packages"
+[[widget]]
+id = "bar"
+entry = "bar.luau"

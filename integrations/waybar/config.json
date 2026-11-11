@@ -1,0 +1,12 @@
+{
+  "custom/keepitnew": {
+    "exec": "\"$HOME/.local/bin/system-update\" --waybar",
+    "return-type": "json",
+    "interval": 10,
+    "signal": 8,
+    "format": "{text}",
+    "tooltip": true,
+    "on-click": "\"$HOME/.local/bin/system-update\" --open",
+    "on-click-right": "\"$HOME/.local/bin/system-update\" --reload"
+  }
+}

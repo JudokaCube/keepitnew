@@ -1,0 +1,665 @@
+#!/usr/bin/env python3
+"""KeepItNew update dashboard, safe background checks, and Noctalia status."""
+import concurrent.futures
+import fcntl
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import re
+import threading
+from datetime import datetime
+# Load the shared module beside this executable, including standalone source runs.
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import nord_theme
+
+SELF = str(Path(__file__).resolve())
+CACHE = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home()/'.cache'))) / 'system-update'
+STATUS = CACHE / 'status.json'
+NORD = {'blue':'88c0d0', 'snow':'eceff4', 'dim':'a3b1c6', 'green':'a3be8c', 'yellow':'ebcb8b', 'red':'bf616a'}
+
+
+def atomic_save(data):
+    CACHE.mkdir(parents=True, exist_ok=True)
+    name = None
+    try:
+        with tempfile.NamedTemporaryFile('w', dir=CACHE, delete=False) as f:
+            name = f.name
+            json.dump(data, f)
+        os.replace(name, STATUS)
+    finally:
+        if name and os.path.exists(name): os.unlink(name)
+
+
+def read_status():
+    try: return json.loads(STATUS.read_text())
+    except (OSError, ValueError): return {'sources': {}, 'checked_at': 0}
+
+
+def run_capture(args, timeout=120):
+    env = dict(os.environ, LC_ALL='C')
+    try:
+        return subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              timeout=timeout, env=env)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError('Check timed out') from exc
+
+
+def package_names(output):
+    # pacman/yay -Qu print: package installed-version -> available-version.
+    return sorted({line.split()[0] for line in output.splitlines() if ' -> ' in line and len(line.split())>=4})
+
+
+def repo_check():
+    if shutil.which('checkupdates'):
+        result = run_capture(['checkupdates'])
+        if result.returncode not in (0,2):
+            raise RuntimeError(result.stderr.strip() or 'Arch check failed')
+        return package_names(result.stdout)
+    if not shutil.which('fakeroot'):
+        raise RuntimeError('Install pacman-contrib to enable Arch checks')
+    # checkupdates-style isolated database: never refresh the live pacman DB here.
+    db = CACHE/'checkdb'
+    db.mkdir(parents=True, exist_ok=True)
+    local = db/'local'
+    if not local.exists(): local.symlink_to('/var/lib/pacman/local', target_is_directory=True)
+    result = run_capture(['fakeroot','pacman','-Sy','--dbpath',str(db),'--logfile','/dev/null','--disable-sandbox','--noconfirm'])
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or 'Arch database refresh failed')
+    result = run_capture(['pacman','-Qu','--dbpath',str(db)])
+    if result.returncode not in (0,1) or (result.returncode==1 and result.stderr.strip()):
+        raise RuntimeError(result.stderr.strip() or 'Arch query failed')
+    return package_names(result.stdout)
+
+
+def aur_check():
+    helper = shutil.which('yay') or shutil.which('paru')
+    if not helper:
+        return []
+    result = run_capture([helper,'-Qua','--color','never'])
+    if result.returncode not in (0,1) or (result.returncode==1 and result.stderr.strip()):
+        raise RuntimeError(result.stderr.strip() or 'AUR query failed')
+    return package_names(result.stdout)
+
+
+def flatpak_check(scope):
+    if not shutil.which('flatpak'): return []
+    result = run_capture(['flatpak','remote-ls',scope,'--updates','--all','--columns=ref'])
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or 'Flatpak query failed')
+    return sorted({line.strip() for line in result.stdout.splitlines() if line.strip()})
+
+
+def refresh():
+    CACHE.mkdir(parents=True,exist_ok=True)
+    with open(CACHE/'check.lock','w') as lock:
+        try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError: return read_status()
+        previous=read_status()
+        sources={}
+        checks={'Arch':repo_check,'AUR':aur_check,
+                'Flatpak (system)':lambda:flatpak_check('--system'),
+                'Flatpak (user)':lambda:flatpak_check('--user')}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            futures={pool.submit(fn):name for name,fn in checks.items()}
+            for future in concurrent.futures.as_completed(futures):
+                name=futures[future]
+                try:
+                    packages=future.result()
+                    sources[name]={'count':len(packages),'packages':packages,'checked_at':time.time(),'error':None}
+                except Exception as exc:
+                    old=previous.get('sources',{}).get(name,{})
+                    sources[name]={'count':old.get('count'),'packages':old.get('packages',[]),
+                                   'checked_at':old.get('checked_at',0),'error':str(exc)[:350]}
+        data={'sources':sources,'checked_at':time.time()}
+        atomic_save(data)
+        return data
+
+
+def update_running():
+    CACHE.mkdir(parents=True,exist_ok=True)
+    # Status readers share the lock; only the updater holds it exclusively.
+    # Concurrent bar/timer queries must not mistake each other for an update.
+    with open(CACHE/'update.lock','a') as lock:
+        try:
+            fcntl.flock(lock,fcntl.LOCK_SH|fcntl.LOCK_NB)
+            return False
+        except BlockingIOError:return True
+
+
+def count_color(total):
+    # Smooth frost-to-Nord-purple gradient; reaches its maximum at 100 updates.
+    amount=min(1,max(0,total)/100)
+    palette=nord_theme.palette()
+    start=tuple(int(palette['accent'][i:i+2],16) for i in (0,2,4));end=tuple(int(palette['purple'][i:i+2],16) for i in (0,2,4))
+    return '#'+''.join(f'{round(a+(b-a)*amount):02x}' for a,b in zip(start,end))
+
+
+def disk_report():
+    """Minimum free-space guard, not an estimate of transaction/build size."""
+    candidates=[('System',Path('/'),2*1024**3),
+                ('Package cache',Path('/var/cache/pacman/pkg'),2*1024**3),
+                ('Home / AUR',Path.home(),2*1024**3),
+                ('Temporary',Path(tempfile.gettempdir()),1024**3),
+                ('Flatpak',Path('/var/lib/flatpak'),2*1024**3)]
+    for path in (Path('/boot'),Path('/efi'),Path('/boot/efi')):
+        if path.is_mount():candidates.append(('Boot / EFI',path,256*1024**2))
+    devices={}
+    for label,path,reserve in candidates:
+        while not path.exists() and path.parent!=path:path=path.parent
+        try:
+            device=path.stat().st_dev
+            usage=shutil.disk_usage(path)
+            previous=devices.get(device)
+            if previous:
+                previous['minimum']=max(previous['minimum'],reserve)
+                continue
+            devices[device]={'label':label,'path':str(path),'free':usage.free,
+                             'total':usage.total,'minimum':reserve,'error':None}
+        except OSError as exc:
+            devices[str(path)]={'label':label,'path':str(path),'free':0,'total':0,
+                                'minimum':reserve,'error':str(exc)}
+    return list(devices.values())
+
+
+def disk_preflight():
+    title('01 / STORAGE')
+    reports=disk_report()
+    for row in reports:
+        ok=not row['error'] and row['free']>=row['minimum']
+        used=1-row['free']/row['total'] if row['total'] else 1
+        blocks=max(0,min(12,round(used*12)))
+        meter='━'*blocks+'─'*(12-blocks)
+        print('  '+paint('✓' if ok else '!','green' if ok else 'yellow')+' '+
+              paint(f"{row['label']:<15}")+' '+paint(meter,'blue')+'  '+
+              paint(f"{row['free']/1024**3:.1f} GiB free",'snow'))
+        print(paint(f"    {row['path']} · minimum {row['minimum']/1024**3:g} GiB",'dim'))
+    ok=all(not r['error'] and r['free']>=r['minimum'] for r in reports)
+    print(paint('  Minimum headroom check; large downloads and AUR builds can need more.','dim'))
+    if not ok:print(paint('  Update paused. Free space on the marked filesystem, then retry.','yellow'))
+    return ok
+
+
+def reboot_status(log_path=Path('/var/log/pacman.log'), proc=Path('/proc'), modules=Path('/usr/lib/modules')):
+    """Conservative recommendation based on core updates since this boot."""
+    reasons=[]
+    try:
+        boot=next(float(line.split()[1]) for line in (proc/'stat').read_text().splitlines() if line.startswith('btime '))
+        # Bound reads even on long-lived installations.
+        with log_path.open('rb') as log:
+            log.seek(0,2)
+            log.seek(max(0,log.tell()-4*1024*1024))
+            lines=log.read().decode(errors='replace').splitlines()
+        for line in lines:
+            match=re.match(r'\[([^]]+)\] \[ALPM\] (?:upgraded|downgraded) (\S+) ',line)
+            if not match:continue
+            try: changed=datetime.fromisoformat(match[1]).timestamp()
+            except ValueError:continue
+            name=match[2]
+            core=name in ('glibc','systemd') or name.startswith('nvidia')
+            kernel=name in ('linux','linux-lts','linux-zen','linux-hardened','linux-rt','linux-rt-lts')
+            if changed>boot and (core or kernel):reasons.append(name)
+    except (OSError,StopIteration,ValueError):pass
+    try:
+        if modules.is_dir() and any(modules.glob('*/pkgbase')) and not (modules/os.uname().release).exists():
+            reasons.append('running kernel replaced')
+    except OSError:pass
+    return sorted(set(reasons))
+
+
+def widget():
+    data=read_status(); sources=data.get('sources',{})
+    known=[v['count'] for v in sources.values() if v.get('count') is not None]
+    total=sum(known)
+    stale=not sources or time.time()-data.get('checked_at',0)>3600
+    errors=any(s.get('error') for s in sources.values())
+    running=update_running()
+    reboot=reboot_status()
+    suffix=' !' if errors or stale else ''
+    unknown=any(s.get('count') is None for s in sources.values())
+    text='Updating…' if running else f'{total}+ ?' if unknown and known else str(total)+suffix if known else '…'
+    def count_for(names):
+        values=[sources.get(name,{}).get('count') for name in names]
+        if any(value is None for value in values): return '?'
+        return str(sum(values))
+    tips=[['Arch',count_for(['Arch'])], ['AUR',count_for(['AUR'])],
+          ['Flatpak',count_for(['Flatpak (system)','Flatpak (user)'])]]
+    if errors or stale:tips.append(['Status','Check incomplete' if errors else 'Count may be stale'])
+    if reboot:
+        tips.append(['Reboot', 'Recommended'])
+        if not running:text += ' ↻'
+    return {'text':text,'glyph':'packages','color':'#'+nord_theme.palette()['purple'] if reboot or errors else '#'+nord_theme.palette()['accent'] if running else count_color(total),'tips':tips, 'rebootNeeded':bool(reboot), 'rebootReasons':reboot}
+
+
+def paint(text, role='snow'):
+    if not sys.stdout.isatty():return text
+    palette=nord_theme.palette()
+    h=palette.get({'blue':'accent','snow':'text','yellow':'purple'}.get(role,role),palette['text'])
+    return f'\033[38;2;{int(h[:2],16)};{int(h[2:4],16)};{int(h[4:],16)}m{text}\033[0m'
+
+
+def title(label):
+    width=max(24,min(78,shutil.get_terminal_size((80,24)).columns-2))
+    print(paint('\n  '+label,'blue'))
+    print(paint('  '+'─'*(width-2),'dim'))
+
+
+def dashboard_intro():
+    width=max(24,min(78,shutil.get_terminal_size((80,24)).columns-2))
+    print(paint('\n┌'+'─'*(width-2)+'┐','blue'))
+    for line in ('KEEPITNEW / SYSTEM UPDATE',time.strftime('%A %d %B · %H:%M'),
+                 'ARCH + AUR   /   FLATPAK'):
+        print(paint('│','blue')+' '+paint(line[:width-4].ljust(width-4))+' '+paint('│','blue'))
+    print(paint('└'+'─'*(width-2)+'┘','blue'))
+    print(paint('  Storage → Authenticate → Packages → Summary','dim'))
+
+
+def stage(label,args):
+    title(label)
+    try:
+        code=subprocess.call(args)
+    except OSError as exc:
+        print(paint(str(exc),'red'));return False
+    ok=code==0
+    print(paint(('  ✓ Stage complete' if ok else f'  ! Needs attention · exit {code}'),'green' if ok else 'yellow'))
+    return ok
+
+
+def launch(overview=False):
+    # The interactive runner keeps results visible until Enter is pressed.
+    command=['kitty','--class','system-update','--title','KeepItNew',
+             '-o','background=#'+nord_theme.palette()['background'],'-o','background_opacity='+str(nord_theme.opacity()),'-o','foreground=#'+nord_theme.palette()['text'],
+             '-o','window_padding_width=22','-o','cursor=#88c0d0','-o','selection_background=#4c566a',SELF,'--overview' if overview else '--interactive']
+    subprocess.Popen(command,start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+
+
+def update_all(interactive=False):
+    CACHE.mkdir(parents=True,exist_ok=True)
+    with open(CACHE/'update.lock','w') as lock:
+        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:
+            print(paint('An update is already running.','yellow'))
+            if interactive: input('Press Enter to close…')
+            return 1
+        dashboard_intro()
+        if not disk_preflight():
+            if interactive:
+                try:input('\n  Press Enter to close…')
+                except (KeyboardInterrupt,EOFError):pass
+            return 1
+        helper=shutil.which('yay') or shutil.which('paru')
+        results=[]
+        automatic=nord_theme.preferences().get('auto_confirm',True)
+        keepalive_stop=threading.Event()
+        def keepalive():
+            while not keepalive_stop.wait(45):
+                subprocess.run(['sudo','-n','-v'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        try:
+            if not stage('02 / AUTHENTICATE',['sudo','-v']):return 1
+            threading.Thread(target=keepalive,daemon=True).start()
+
+            if helper:
+                results.append(('Arch + AUR',stage('03 / ARCH + AUR',[helper,'-Syu'] + (['--noconfirm'] if automatic else []) + (['--answerclean','None','--answerdiff','None','--answeredit','None','--answerupgrade','None'] if Path(helper).name=='yay' and automatic else []))))
+            else:
+                results.append(('Arch',stage('03 / ARCH',['sudo','-n','pacman','-Syu']+(['--noconfirm'] if automatic else []))))
+            if shutil.which('flatpak'):
+                results.append(('Flatpak system',stage('04 / FLATPAK · SYSTEM',['sudo','-n','flatpak','update','--system']+(['-y','--noninteractive'] if automatic else []))))
+                results.append(('Flatpak user',stage('05 / FLATPAK · USER',['flatpak','update','--user']+(['-y','--noninteractive'] if automatic else []))))
+            title('06 / SUMMARY')
+            for label,ok in results:
+                print(paint(f"  {'✓' if ok else '!'} {label}: {'complete' if ok else 'needs attention'}",'green' if ok else 'red'))
+            print(paint('\n  Refreshing the bar count…','dim'))
+            refresh()
+            reboot=reboot_status()
+            if reboot:print(paint('  ↻ Reboot recommended: '+', '.join(reboot),'yellow'))
+            code=0 if all(ok for _,ok in results) else 1
+        except KeyboardInterrupt:
+            print(paint('\nUpdate interrupted. Check the package-manager output above.','yellow'))
+            code=130
+        finally:
+            keepalive_stop.set()
+        fcntl.flock(lock,fcntl.LOCK_UN)
+        if interactive:
+            try: input('\nPress Enter to close…')
+            except (KeyboardInterrupt,EOFError):pass
+        return code
+
+
+def cleanup_options():
+    cache=Path(os.environ.get('XDG_CACHE_HOME',Path.home()/'.cache'))
+    return [
+        {'name':'Old thumbnails','detail':'Cached previews older than 30 days; regenerated when needed.',
+         'path':cache/'thumbnails','command':None,'available':True},
+        {'name':'Old package downloads','detail':'Keep the newest 2 cached versions; requires pacman-contrib.',
+         'command':['sudo','paccache','-rk2'],'available':bool(shutil.which('paccache'))},
+        {'name':'Unused Flatpak runtimes · user','detail':'Flatpak removes only runtimes it marks unused.',
+         'command':['flatpak','uninstall','--user','--unused','-y','--noninteractive'],'available':bool(shutil.which('flatpak'))},
+        {'name':'Unused Flatpak runtimes · system','detail':'Flatpak removes only runtimes it marks unused.',
+         'command':['sudo','flatpak','uninstall','--system','--unused','-y','--noninteractive'],'available':bool(shutil.which('flatpak'))},
+        {'name':'Archived system logs','detail':'Remove archived journal files older than 14 days; keep active logs.',
+         'command':['sudo','journalctl','--vacuum-time=14d'],'available':bool(shutil.which('journalctl'))},
+        {'name':'Pip download cache','detail':'Downloaded Python wheels and HTTP cache; installed packages stay.',
+         'command':[sys.executable,'-m','pip','cache','purge'],'available':__import__('importlib.util',fromlist=['find_spec']).find_spec('pip') is not None},
+        {'name':'npm download cache','detail':'Downloaded JS packages; project dependencies stay installed.',
+         'command':['npm','cache','clean','--force'],'available':bool(shutil.which('npm'))},
+        {'name':'Go build cache','detail':'Compiled build and test cache; source and modules stay.',
+         'command':['go','clean','-cache','-testcache'],'available':bool(shutil.which('go'))},
+        {'name':'ccache compiler cache','detail':'Cached compiler outputs; later builds may take longer.',
+         'command':['ccache','--clear'],'available':bool(shutil.which('ccache'))},
+        {'name':'uv download/build cache','detail':'Python downloads/build cache; environments stay installed.',
+         'command':['uv','cache','clean'],'available':bool(shutil.which('uv'))},
+        {'name':'Uninstalled package downloads','detail':'Remove cached packages no longer installed; requires paccache.',
+         'command':['sudo','paccache','-ruk0'],'available':bool(shutil.which('paccache'))},
+        {'name':'Expired system temporary files','detail':'Uses systemd age/cleanup policies; does not empty all of /tmp.',
+         'command':['sudo','systemd-tmpfiles','--clean'],'available':bool(shutil.which('systemd-tmpfiles'))},
+    ]
+
+
+def thumbnail_candidates(root, now=None):
+    # Never follow links or traverse outside the selected thumbnail cache.
+    if root.is_symlink() or not root.is_dir():return []
+    cutoff=(time.time() if now is None else now)-30*86400
+    files=[]
+    for folder,dirs,names in os.walk(root,followlinks=False):
+        dirs[:]=[d for d in dirs if not (Path(folder)/d).is_symlink()]
+        for name in names:
+            path=Path(folder)/name
+            try:
+                stat=path.lstat()
+                if __import__('stat').S_ISREG(stat.st_mode) and stat.st_mtime<cutoff:
+                    files.append((path,stat.st_size,stat.st_ino,stat.st_mtime_ns))
+            except OSError:pass
+    return files
+
+
+def clean_thumbnails(root):
+    count=0
+    for path,size,inode,mtime in thumbnail_candidates(root):
+        try:
+            current=path.lstat()
+            if path.is_symlink() or current.st_ino!=inode or current.st_mtime_ns!=mtime:continue
+            path.unlink();count+=1
+        except OSError as exc:print(paint(f'  Could not remove {path.name}: {exc}','yellow'))
+    print(f'  Removed {count} old thumbnails.')
+    return True
+
+
+def run_cleanup(options, selected):
+    CACHE.mkdir(parents=True,exist_ok=True)
+    with (CACHE/'update.lock').open('a') as lock:
+        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:
+            print(paint('  Updates or cleanup are already running. Try again after they finish.','yellow'))
+            return False
+        ok=True
+        for index in sorted(selected):
+            item=options[index]
+            if not item['available']:continue
+            title(item['name'])
+            if item.get('path') is not None:
+                ok=clean_thumbnails(item['path']) and ok
+            else:ok=stage(item['name'],item['command']) and ok
+        return ok
+
+
+CLEANUP_PRESETS = {
+    'l': ('Light', {0,2}),
+    'b': ('Balanced', {0,1,2,3,4,10,11}),
+    'd': ('Developer', {5,6,7,8,9}),
+    'f': ('Full', set(range(12))),
+    'n': ('None', set()),
+}
+
+
+def cleanup_preset(options, key):
+    return {i for i in CLEANUP_PRESETS[key][1] if i<len(options) and options[i]['available']}
+
+
+def edit_cleanup_selection(options, selected):
+    selected=set(selected);page=0;size=4
+    pages=(len(options)+size-1)//size
+    while True:
+        if sys.stdout.isatty():print('\033[2J\033[H',end='')
+        title(f'CUSTOMIZE CLEANUP · {len(selected)} selected · page {page+1}/{pages}')
+        print('  [✓] will be cleaned    [ ] will be kept    [—] unavailable')
+        for i in range(page*size,min(len(options),(page+1)*size)):
+            item=options[i];mark='—' if not item['available'] else '✓' if i in selected else ' '
+            print(paint(f"\n  {i+1:2}. [{mark}] {item['name']}",'blue' if i in selected else 'snow'))
+            print(paint('         '+item['detail'],'dim'))
+            if not item['available']:print(paint('         Required tool is not installed.','dim'))
+        print('\n  Type a category number to check/uncheck it, then press Enter.')
+        print('  N = next page   P = previous page   D = done   X = uncheck all')
+        try:choice=input('  Category number or action: ').strip().lower()
+        except (EOFError,KeyboardInterrupt):return selected
+        if choice in ('d','q',''):return selected
+        if choice=='x':selected.clear()
+        elif choice in ('n','p'):page=(page+(1 if choice=='n' else -1))%pages
+        elif choice.isdigit() and 1<=int(choice)<=len(options):
+            index=int(choice)-1
+            if options[index]['available']:selected.symmetric_difference_update({index})
+
+
+def cleanup_menu():
+    if sys.stdin.isatty() and sys.stdout.isatty():return interactive_cleanup()
+    options=cleanup_options()
+    while True:
+        if sys.stdout.isatty():print('\033[2J\033[H',end='')
+        title('DISK CLEANUP · 1 OF 3 · CHOOSE WHAT TO CLEAN')
+        print('  Cleanup removes disposable caches and old logs to free space.\n')
+        print(paint('  1. Light cleanup — start here','blue'))
+        print('     Old image previews and unused personal Flatpak runtimes.\n')
+        print('  2. System cleanup')
+        print('     Light cleanup plus old package downloads, logs and temporary files.\n')
+        print('  3. Developer caches')
+        print('     Download/build caches for Python, JavaScript, Go and compilers.\n')
+        print('  4. All available categories')
+        print('     Combines system cleanup and developer caches.\n')
+        print('  5. Choose categories myself\n  0. Back to updater\n')
+        print(paint('  Nothing is deleted when you choose a preset. Review comes next.','dim'))
+        try:choice=input('  Type 1–5, then press Enter (0 to go back): ').strip().lower()
+        except (EOFError,KeyboardInterrupt):return
+        if choice in ('0','q'):return
+        mapping={'1':'l','2':'b','3':'d','4':'f','5':'n','l':'l','b':'b','d':'d','f':'f','n':'n'}
+        if choice not in mapping:continue
+        selected=cleanup_preset(options,mapping[choice])
+        if choice in ('5','n'):selected=edit_cleanup_selection(options,selected)
+        while True:
+            if sys.stdout.isatty():print('\033[2J\033[H',end='')
+            title('DISK CLEANUP · 2 OF 3 · REVIEW YOUR CHOICES')
+            for i in sorted(selected):
+                item=options[i]
+                print(paint('  ✓ '+item['name'],'blue'))
+                print(paint('    '+item['detail'],'dim'))
+                if item.get('path'):
+                    candidates=thumbnail_candidates(item['path'])
+                    print(f'    About {sum(x[1] for x in candidates)/1024**2:.1f} MiB recoverable')
+            if not selected:print('  No categories selected. Choose “2” to add some.')
+            print(paint('\n  Only the categories above will be cleaned. Missing tools are skipped.','dim'))
+            print(paint('  Cache/log deletion is permanent. Other cleanup sizes are reported by the tools.','dim'))
+            print('\n  1. Clean these items now\n  2. Check/uncheck categories\n  3. Choose a different preset\n  0. Back to updater')
+            try:action=input('  Type an option number, then press Enter: ').strip().lower()
+            except (EOFError,KeyboardInterrupt):return
+            if action in ('0','q'):return
+            if action=='3':break
+            if action=='2':selected=edit_cleanup_selection(options,selected)
+            if action=='1' and selected:
+                title('DISK CLEANUP · 3 OF 3 · CLEANING')
+                ok=run_cleanup(options,selected)
+                title('CLEANUP COMPLETE' if ok else 'SOME ITEMS NEED ATTENTION')
+                print('  '+('Selected cleanup tasks finished.' if ok else 'Read the results above for tasks that could not finish.'))
+                try:input('\n  Press Enter to return to the updater menu…')
+                except (EOFError,KeyboardInterrupt):pass
+                return
+
+
+def interactive_screen(mode='home', options=None, selected=None):
+    import curses
+    selected=selected if selected is not None else set()
+    options=options or []
+    def screen(win):
+        curses.curs_set(0);win.keypad(True);curses.mousemask(curses.ALL_MOUSE_EVENTS)
+        curses.mouseinterval(0)
+        curses.start_color();curses.use_default_colors()
+        curses.init_pair(1,curses.COLOR_CYAN,-1)
+        curses.init_pair(2,curses.COLOR_WHITE,curses.COLOR_BLUE)
+        try:
+            if curses.can_change_color() and curses.COLORS>18:
+                for index,rgb in [(16,(136,192,208)),(17,(236,239,244)),(18,(67,76,94))]:
+                    curses.init_color(index,*(round(v*1000/255) for v in rgb))
+                curses.init_pair(1,16,-1);curses.init_pair(2,17,18)
+        except curses.error:pass
+        cursor=0;offset=0
+        while True:
+            nord_theme.curses_colors(curses,win)
+            win.erase();height,width=win.getmaxyx()
+            def put(y,text,style=0):
+                if 0<=y<height-1:
+                    try:win.addnstr(y,2,text,max(0,width-4),style)
+                    except curses.error:pass
+            def centered(y,text,style=0):
+                text=text[:max(0,width-4)]
+                x=max(2,(width-len(text))//2)
+                if 0<=y<height-1:
+                    try:win.addnstr(y,x,text,max(0,width-x-1),style)
+                    except curses.error:pass
+                return x,x+len(text)
+            if height<12 or width<36:
+                put(0,'Enlarge window (Q quits)',curses.color_pair(1))
+                win.refresh()
+                if win.getch() in (ord('q'),27):return 'back' if mode=='cleanup' else 'quit'
+                continue
+            put(1,'KEEPITNEW / '+('DISK CLEANUP' if mode=='cleanup' else 'SYSTEM UPDATE'),curses.color_pair(1)|curses.A_BOLD)
+            put(2,'─'*max(0,width-4),curses.color_pair(1))
+            if mode=='cleanup':
+                rows=[('preset:'+k,'Preset: '+name) for k,(name,_) in CLEANUP_PRESETS.items()]
+                rows += [('toggle:'+str(i),('✓ ' if i in selected else '□ ')+item['name']+(' (unavailable)' if not item['available'] else '')) for i,item in enumerate(options)]
+                rows += [('clean',f'CLEAN {len(selected)} SELECTED CATEGORIES'),('back','Back')]
+                put(3,'Space/click toggles · presets replace selection · Clean deletes checked caches')
+            else:
+                status=widget()
+                put(3,'Updates: '+status['text']+'   •   Click an action or use arrows + Enter')
+                rows=[('update','Install updates'),('cleanup','Free disk space'),('refresh','Check for updates'),('theme','Appearance'),('reload','Reload app'),('quit','Close')]
+            visible=max(1,height-9)
+            cursor=max(0,min(cursor,len(rows)-1))
+            if cursor<offset:offset=cursor
+            if cursor>=offset+visible:offset=cursor-visible+1
+            hits={}
+            for n,(key,label) in enumerate(rows[offset:offset+visible]):
+                y=5+n;hits[y]=offset+n
+                put(y,('› ' if offset+n==cursor else '  ')+label,curses.color_pair(2) if offset+n==cursor else 0)
+            if mode=='cleanup' and rows[cursor][0].startswith('toggle:'):
+                put(height-3,options[int(rows[cursor][0].split(':')[1])]['detail'],curses.color_pair(1))
+            else:centered(height-3,'↑↓ Move · Enter Select · Esc Back' if width<65 else '↑↓ Move · Enter/click Select · Wheel Scroll · Esc Back',curses.color_pair(1))
+            clean_bounds=None;back_bounds=None
+            if mode=='cleanup':
+                clean_text=f'[C Clean {len(selected)}]';back_text='[Esc Back]'
+                start,end=centered(height-2,clean_text+'   '+back_text,curses.color_pair(1)|curses.A_BOLD)
+                clean_bounds=(start,start+len(clean_text));back_bounds=(start+len(clean_text)+3,end)
+            win.refresh();key=win.getch();activate=False
+            if mode=='cleanup' and key==ord('c') and selected:return 'clean'
+            if key in (27,ord('q')):return 'back' if mode=='cleanup' else 'quit'
+            if key in (curses.KEY_DOWN,ord('j'),9):cursor=min(len(rows)-1,cursor+1)
+            elif key in (curses.KEY_UP,ord('k')):cursor=max(0,cursor-1)
+            elif key==curses.KEY_NPAGE:cursor=min(len(rows)-1,cursor+visible)
+            elif key==curses.KEY_PPAGE:cursor=max(0,cursor-visible)
+            elif key in (10,13,32):activate=True
+            elif key==curses.KEY_MOUSE:
+                try:_,x,y,_,state=curses.getmouse()
+                except curses.error:continue
+                if mode=='cleanup' and y==height-2 and state & (curses.BUTTON1_PRESSED|curses.BUTTON1_CLICKED):
+                    if clean_bounds[0]<=x<clean_bounds[1] and selected:return 'clean'
+                    if back_bounds[0]<=x<back_bounds[1]:return 'back'
+                if state & curses.BUTTON4_PRESSED:cursor=max(0,cursor-2)
+                elif state & getattr(curses,'BUTTON5_PRESSED',0):cursor=min(len(rows)-1,cursor+2)
+                elif state & (curses.BUTTON1_PRESSED|curses.BUTTON1_CLICKED) and y in hits:
+                    cursor=hits[y];activate=True
+            if activate:
+                action=rows[cursor][0]
+                if action.startswith('preset:'):
+                    selected.clear();selected.update(cleanup_preset(options,action.split(':')[1]))
+                elif action.startswith('toggle:'):
+                    index=int(action.split(':')[1])
+                    if options[index]['available']:selected.symmetric_difference_update({index})
+                elif action=='clean' and not selected:continue
+                else:return action
+    return curses.wrapper(screen)
+
+
+def interactive_cleanup():
+    options=cleanup_options();selected=cleanup_preset(options,'l')
+    while True:
+        action=interactive_screen('cleanup',options,selected)
+        if action=='back':return
+        if action=='clean':
+            run_cleanup(options,selected);selected.clear()
+            try:input('\nPress Enter to return to cleanup…')
+            except (EOFError,KeyboardInterrupt):return
+
+
+def interactive_overview():
+    while True:
+        action=interactive_screen()
+        if action=='quit':return 0
+        if action=='cleanup':interactive_cleanup()
+        elif action=='update':update_all(interactive=True)
+        elif action=='refresh':
+            print('Checking for updates…');refresh()
+        elif action=='theme':nord_theme.picker()
+        elif action=='reload':os.execv(sys.executable,[sys.executable,SELF,'--overview'])
+
+
+def overview():
+    if sys.stdin.isatty() and sys.stdout.isatty():return interactive_overview()
+    while True:
+        if sys.stdout.isatty():print('\033[2J\033[H',end='')
+        dashboard_intro()
+        disk_preflight()
+        title('UPDATE STATUS')
+        status=widget()
+        for name,value in status['tips']:print(f'  {name:<14} {value}')
+        if update_running():print(paint('  An update is running. Let that window finish.','blue'))
+        print(paint('\n  WHAT WOULD YOU LIKE TO DO?','blue'))
+        print('  1. Install available updates\n  2. Free disk space (cleanup)\n  3. Reload this app\n  0. Close')
+        print(paint('  Type a number, then press Enter.','dim'))
+        try:choice=input('  Your choice: ').strip().lower()
+        except (EOFError,KeyboardInterrupt):return 0
+        if choice in ('0','q'):return 0
+        if choice in ('2','c'):
+            cleanup_menu()
+            continue
+        if choice in ('3','r'):os.execv(sys.executable,[sys.executable,SELF,'--overview'])
+        if choice=='1':
+            if update_running():continue
+            update_all(interactive=True)
+
+
+def main():
+    arg=sys.argv[1] if len(sys.argv)>1 else ''
+    if arg=='--waybar':print(json.dumps(nord_theme.waybar_status(widget(),'updates')));return 0
+    if arg=='--status':print(json.dumps(widget()));return 0
+    if arg=='--check':
+        data=refresh()
+        print(json.dumps(widget()))
+        for name,source in data['sources'].items():
+            if source.get('error'):print(f"{name}: {source['error']}",file=sys.stderr)
+        return 1 if any(s.get('error') for s in data['sources'].values()) else 0
+    if arg=='--open':launch(overview=True);return 0
+    if arg=='--reload':
+        nord_theme.reload_widgets()
+        subprocess.run(['systemctl','--user','start','--no-block','system-update-check.service'],stdout=subprocess.DEVNULL)
+        launch(overview=True);return 0
+    if arg=='--overview':return overview()
+    if arg=='--cleanup':cleanup_menu();return 0
+    if arg in ('-h','--help'):
+        print('system-update: update Arch + AUR + Flatpak\n--cleanup: choose disk cleanup categories\n--open: open KeepItNew window\n--check: refresh cached counts\n--status: cached bar status')
+        return 0
+    if arg not in ('','--interactive'):
+        print('Unknown option; use --help',file=sys.stderr);return 2
+    return overview() if arg=='' else update_all(True)
+
+
+if __name__=='__main__':sys.exit(main())
