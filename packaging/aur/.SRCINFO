@@ -1,0 +1,24 @@
+pkgbase = keepitnew
+	pkgdesc = Arch, AUR and Flatpak update dashboard and disk cleanup
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/JudokaCube/keepitnew
+	arch = any
+	license = MIT
+	depends = python>=3.11
+	depends = kitty
+	depends = systemd
+	depends = pacman
+	depends = fakeroot
+	depends = sudo
+	optdepends = flatpak: optional Flatpak updates and cleanup
+	optdepends = pacman-contrib: update checks and package-cache cleanup
+	optdepends = yay: AUR updates
+	optdepends = paru: alternative AUR helper
+	optdepends = waybar: optional desktop bar
+	optdepends = quickshell: optional Caelestia widget
+	optdepends = qt6-declarative: optional Caelestia QML integration
+	source = keepitnew-0.1.0.tar.gz::https://github.com/JudokaCube/keepitnew/releases/download/v0.1.0/keepitnew-0.1.0.tar.gz
+	sha256sums = a0935bb687325b6e23bd2beb7959cc3b3eab664dd942f4f56c5c9bf7d15da6e8
+
+pkgname = keepitnew

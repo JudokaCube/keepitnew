@@ -2,39 +2,55 @@
 
 Update Arch, AUR and Flatpak packages, clean up disk space, and track updates from your desktop bar.
 
-## Install
+## Features
 
-Requires Linux, Python 3.11+, Kitty and systemd. Updates require Arch/pacman, Flatpak and checkupdates or fakeroot; yay/paru adds AUR.
+- Arch, AUR and Flatpak update counts, scheduled checks and one update workflow.
+- Disk-space checks, reboot recommendations, and cleanup presets with selectable categories.
+- Nine themes, optional transparency, square border styles and configurable widgets.
+
+## Installation
+
+Requires Linux, Python 3.11+, Kitty and systemd. Updates require Arch/pacman and checkupdates or fakeroot; yay/paru adds AUR, and Flatpak support is optional.
+
+Download the installer from [GitHub Releases](https://github.com/JudokaCube/keepitnew/releases/latest), extract it, and run `bash install.sh`. The installer starts with no personal data.
+
+From the source folder:
 
 ```sh
 python3 build-release.py
 bash release/install.sh
 ```
 
-For a downloaded installer, run `bash install.sh`. Setup offers theme, opacity, bar, position, aliases, check interval and package confirmations. Existing data is preserved; no keybindings are added. `--help` lists flags; `--yes` uses defaults/flags without questions.
+For an extracted installer archive, run `bash install.sh` instead.
 
-## Bars
+This installer includes only KeepItNew and its widgets. Choose a bar, theme and background-service options during setup. Existing app data is preserved. Open a new terminal to use newly enabled aliases.
 
-- Noctalia 5.3+: native plugins, enabled automatically.
-- Waybar: native custom modules; existing JSON/JSONC values are preserved, formatting/comments are rewritten. Restart Waybar after installation.
-- Caelestia: requires an editable shell checkout via `--caelestia-root`; setup adds the supplied QML widget to its bar. Restart that shell afterward. System-owned files are not changed.
-- None: apps and optional background services only.
+## Usage
 
-Right-click opens fresh app code. Widget styles follow the shared theme. Waybar uses tooltips for hover details; Caelestia uses a tooltip and progress strip. Shell-native notification alignment remains controlled by the shell.
+Run `keepitnew`. Local installs also provide `system-update` and the optional `update` alias. Select actions with arrows/Enter or the mouse. In **Free disk space**, choose a preset, toggle categories with Space or clicks, then select **Clean**. Unavailable tools are disabled.
 
-## KeepItNew
+## Settings
 
-Run `update` or `python3 bin/system-update`. Arrows/Enter or clicks select actions. Cleanup has presets and checkboxes; space/click toggles, clean runs checked categories. Missing tools are disabled. Disk checks are minimum reserves, not exact size estimates. Reboot hints never reboot automatically.
+Choose **Settings** from the main menu. Use arrows for quick adjustments; Enter or a click opens choices. Theme colors and square borders preview in Settings while preserving terminal transparency. **Save / Ctrl+S** applies changes; **Esc** discards unsaved changes. **Defaults** selects the default values; Save applies them.
 
-## Appearance and development
+- KeepItNew: AUR and Flatpak source toggles, preferred AUR helper, cached package versions, automatic checks, confirmations, reboot hints and cleanup presets.
+- Appearance: theme, opacity, borders, widget visibility and text. Noctalia also supports animation controls.
 
-Open theme/appearance for nine palettes. Arrows preview, Enter/click saves, Esc cancels, n resets Nord. Opacity defaults to 94%. Reopen windows after code or launch-setting changes. Settings respect XDG directories; runtime data stays outside the source tree.
+Widget settings take effect on the next poll. Opacity applies to newly launched windows. Settings belong only to this app.
 
-`bin/` apps, `plugins/` Noctalia widgets, `integrations/` other bars, `services/` startup, `packaging/` installer.
+## Desktop bars
 
-```sh
-noctalia plugins lint plugins/*
-python3 build-release.py
-```
+- **Noctalia 5.3+**: native widgets with hover details.
+- **Waybar**: custom modules and tooltips. Restart Waybar after installation. JSONC values are preserved; formatting and comments are rewritten.
+- **Caelestia**: requires a writable shell checkout using `--caelestia-root`. The installer adds a QML component; restart the shell afterward. This integration has syntax/integration checks but has not been visually tested in a running Caelestia session.
+- **No bar**: use the apps and optional background services on their own.
 
-Rebuild after edits. Upload this source folder, including `.gitignore`, and attach `release.tar.gz` to releases. Files starting `PRIVATE-` are personal copies, not public releases.
+Right-click a widget to reload and open its app.
+
+## Arch packaging
+
+Separate Arch package builds are available through `build-arch.py`. See [Arch packaging](packaging/aur/README.md) for local builds and future AUR release preparation. AUR submission is pending; the release source can already be built locally with `makepkg`.
+
+## License
+
+MIT · jdkcube

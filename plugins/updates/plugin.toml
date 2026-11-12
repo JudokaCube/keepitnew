@@ -1,6 +1,6 @@
-id = "nord-desktop/updates"
+id = "jdkcube/updates"
 name = "KeepItNew"
-version = "1.0.0"
+version = "0.1.0"
 plugin_api = 32
 author = "jdkcube"
 description = "Combined Arch, AUR, and Flatpak update count"

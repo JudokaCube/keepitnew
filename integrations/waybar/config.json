@@ -1,12 +1,12 @@
 {
   "custom/keepitnew": {
-    "exec": "\"$HOME/.local/bin/system-update\" --waybar",
+    "exec": "if command -v keepitnew >/dev/null 2>&1; then keepitnew --waybar; else \"$HOME/.local/bin/system-update\" --waybar; fi",
     "return-type": "json",
     "interval": 10,
-    "signal": 8,
+    "signal": 9,
     "format": "{text}",
     "tooltip": true,
-    "on-click": "\"$HOME/.local/bin/system-update\" --open",
-    "on-click-right": "\"$HOME/.local/bin/system-update\" --reload"
+    "on-click": "if command -v keepitnew >/dev/null 2>&1; then keepitnew --open; else \"$HOME/.local/bin/system-update\" --open; fi",
+    "on-click-right": "if command -v keepitnew >/dev/null 2>&1; then keepitnew --reload; else \"$HOME/.local/bin/system-update\" --reload; fi"
   }
 }

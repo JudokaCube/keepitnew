@@ -1,3 +1,5 @@
+local displayMode = "hover"
+local animation = .45
 local busy = false
 local renderedText = nil
 local hasStatus = false
@@ -17,10 +19,13 @@ local function poll()
     if busy then return end
     busy = true
     lastPoll = os.time()
-    noctalia.runAsync('"$HOME/.local/bin/system-update" --status', function(result)
+    noctalia.runAsync('if command -v keepitnew >/dev/null 2>&1; then keepitnew --status; else "$HOME/.local/bin/system-update" --status; fi', function(result)
         busy = false
         local data = result.exitCode == 0 and noctalia.json.decode(result.stdout) or nil
         if data and type(data) == "table" then
+            displayMode = data.displayMode or "hover"
+            animation = data.animation or .45
+            barWidget.setVisible(data.visible ~= false)
             hasStatus = true
             label = data.text or "…"
             barWidget.setGlyph(data.glyph or "packages")
@@ -38,12 +43,12 @@ end
 
 function update()
     if os.time() - lastPoll >= 5 then poll() end
-    local target = hovering and 1 or 0
+    local target = (displayMode == "always" or (displayMode ~= "icon" and hovering)) and 1 or 0
     if math.abs(progress - target) < 0.01 then
         progress = target
         noctalia.setUpdateInterval(1000)
     else
-        progress = progress + (target - progress) * 0.45
+        progress = progress + (target - progress) * animation
         noctalia.setUpdateInterval(16)
     end
     render()
@@ -54,10 +59,10 @@ function onHover(value)
     update()
 end
 function onClick()
-    noctalia.runAsync('"$HOME/.local/bin/system-update" --open')
+    noctalia.runAsync('if command -v keepitnew >/dev/null 2>&1; then keepitnew --open; else "$HOME/.local/bin/system-update" --open; fi')
 end
 function onRightClick()
-    noctalia.runAsync('"$HOME/.local/bin/system-update" --reload')
+    noctalia.runAsync('if command -v keepitnew >/dev/null 2>&1; then keepitnew --reload; else "$HOME/.local/bin/system-update" --reload; fi')
 end
 barWidget.setVisible(true)
 barWidget.setGlyph("packages")
