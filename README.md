@@ -26,6 +26,10 @@ This installer includes only KeepItNew and its widgets. Choose a bar, theme and 
 
 Run `keepitnew` to open its own desktop window; **Q** closes it. Use `keepitnew --overview` to run inside your current terminal instead. Without a desktop or Kitty, it stays in the current terminal. Local installs also provide `system-update` and the optional `update` alias. Select actions with arrows/Enter or the mouse. In **Free disk space**, choose a preset, toggle categories with Space or clicks, then select **Clean**. Unavailable tools are disabled.
 
+## App updates
+
+Choose **Check for app updates** on the main menu. Review the release notes, then choose **Yes, install** or **No, not now**. Local installs verify the release checksum and update app/widget code without resetting data or settings. Package-managed installs use yay/paru for a full system upgrade; source checkouts are never overwritten. The new release may reach package sources later than GitHub. Updates are checked only when requested.
+
 ## Settings
 
 Choose **Settings** from the main menu. Use arrows for quick adjustments; Enter or a click opens choices. **Save / Ctrl+S** applies changes; **Esc** discards unsaved changes.

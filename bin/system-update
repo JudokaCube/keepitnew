@@ -564,7 +564,7 @@ def interactive_screen(mode='home', options=None, selected=None):
                 if status is None or time.monotonic()-status_at>=2:
                     status=widget();status_at=time.monotonic()
                 put(3,'Updates: '+status['text']+'   •   Click an action or use arrows + Enter')
-                rows=[('update','Install updates'),('cleanup','Free disk space'),('refresh','Check for updates'),('settings','Settings'),('reload','Reload app'),('quit','Close')]
+                rows=[('update','Install updates'),('cleanup','Free disk space'),('refresh','Check package updates'),('settings','Settings'),('app-update','Check for app updates'),('reload','Reload app'),('quit','Close')]
             visible=max(1,height-9)
             cursor=max(0,min(cursor,len(rows)-1))
             if cursor<offset:offset=cursor
@@ -630,6 +630,8 @@ def interactive_overview():
         elif action=='update':update_all(interactive=True)
         elif action=='refresh':
             print('Checking for updates…');refresh()
+        elif action=='app-update':
+            if nord_theme.check_app_updates(SELF):launch(overview=True);return 0
         elif action=='settings':nord_theme.settings('updates')
         elif action=='reload':
             nord_theme.reload_widgets()
