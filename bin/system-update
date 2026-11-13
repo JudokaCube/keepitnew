@@ -39,7 +39,7 @@ def read_status():
     try:
         data=json.loads(STATUS.read_text())
         if not isinstance(data,dict) or not isinstance(data.get('sources'),dict):raise ValueError('Invalid cache')
-        if type(data.get('checked_at')) not in (int,float) or not __import__('math').isfinite(data['checked_at']) or data['checked_at']<0:data['checked_at']=0
+        if type(data.get('checked_at')) not in (int,float) or not __import__('math').isfinite(data['checked_at']) or data['checked_at']<0 or data['checked_at']>time.time()+300:data['checked_at']=0
         for source in data['sources'].values():
             if not isinstance(source,dict):raise ValueError('Invalid source cache')
             count=source.get('count')
@@ -175,11 +175,11 @@ def disk_report():
         while not path.exists() and path.parent!=path:path=path.parent
         try:
             device=path.stat().st_dev
-            usage=shutil.disk_usage(path)
             previous=devices.get(device)
             if previous:
                 previous['minimum']=max(previous['minimum'],reserve)
                 continue
+            usage=shutil.disk_usage(path)
             devices[device]={'label':label,'path':str(path),'free':usage.free,
                              'total':usage.total,'minimum':reserve,'error':None}
         except OSError as exc:
@@ -298,7 +298,7 @@ def launch(overview=False):
     # The interactive runner keeps results visible until Enter is pressed.
     command=['kitty',*nord_theme.kitty_launch_options(),'--class','system-update','--title','KeepItNew',
              '-o','background=#'+nord_theme.palette()['background'],'-o','background_opacity='+str(nord_theme.opacity()),'-o','foreground=#'+nord_theme.palette()['text'],
-             '-o','window_padding_width=22','-o','cursor=#'+nord_theme.palette()['accent'],'-o','selection_background=#'+nord_theme.palette()['surface'],SELF,'--overview' if overview else '--interactive']
+             '-o','close_on_child_death=yes','-o','window_padding_width=22','-o','cursor=#'+nord_theme.palette()['accent'],'-o','selection_background=#'+nord_theme.palette()['surface'],SELF,'--overview' if overview else '--interactive']
     subprocess.Popen(command,start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 
 
@@ -531,14 +531,8 @@ def interactive_screen(mode='home', options=None, selected=None):
         curses.curs_set(0);win.keypad(True);curses.mousemask(curses.ALL_MOUSE_EVENTS)
         curses.mouseinterval(0)
         curses.start_color();curses.use_default_colors()
-        curses.init_pair(1,curses.COLOR_CYAN,-1)
-        curses.init_pair(2,curses.COLOR_WHITE,curses.COLOR_BLUE)
-        try:
-            if curses.can_change_color() and curses.COLORS>18:
-                for index,rgb in [(16,(136,192,208)),(17,(236,239,244)),(18,(67,76,94))]:
-                    curses.init_color(index,*(round(v*1000/255) for v in rgb))
-                curses.init_pair(1,16,-1);curses.init_pair(2,17,18)
-        except curses.error:pass
+        win.timeout(1000)
+        status=None;status_at=0
         cursor=0;offset=0
         while True:
             nord_theme.curses_colors(curses,win)
@@ -567,7 +561,8 @@ def interactive_screen(mode='home', options=None, selected=None):
                 rows += [('clean',f'CLEAN {len(selected)} SELECTED CATEGORIES'),('back','Back')]
                 put(3,'Space/click toggles · presets replace selection · Clean deletes checked caches')
             else:
-                status=widget()
+                if status is None or time.monotonic()-status_at>=2:
+                    status=widget();status_at=time.monotonic()
                 put(3,'Updates: '+status['text']+'   •   Click an action or use arrows + Enter')
                 rows=[('update','Install updates'),('cleanup','Free disk space'),('refresh','Check for updates'),('settings','Settings'),('reload','Reload app'),('quit','Close')]
             visible=max(1,height-9)
@@ -580,7 +575,7 @@ def interactive_screen(mode='home', options=None, selected=None):
                 put(y,(('› ' if offset+n==cursor else '  ')+label).ljust(max(0,width-4)),curses.color_pair(2) if offset+n==cursor else 0)
             if mode=='cleanup' and rows[cursor][0].startswith('toggle:'):
                 put(height-3,options[int(rows[cursor][0].split(':')[1])]['detail'],curses.color_pair(1))
-            else:centered(height-3,'↑↓ Move · Enter Select · Esc Back' if width<65 else '↑↓ Move · Enter/click Select · Wheel Scroll · Esc Back',curses.color_pair(1))
+            else:centered(height-3,('↑↓ Move · Enter Select · Q Back' if mode=='cleanup' else '↑↓ Move · Enter Select · Q Quit') if width<65 else ('↑↓ Move · Enter/click Select · Q/Esc Back' if mode=='cleanup' else '↑↓ Move · Enter/click Select · Q/Esc Quit'),curses.color_pair(1))
             clean_bounds=None;back_bounds=None
             if mode=='cleanup':
                 clean_text=f'[C Clean {len(selected)}]';back_text='[Esc Back]'
@@ -686,11 +681,16 @@ def main():
     if arg=='--overview':return overview()
     if arg=='--cleanup':cleanup_menu();return 0
     if arg in ('-h','--help'):
-        print('system-update: update Arch + AUR + Flatpak\n--settings: interactive settings\n--cleanup: choose disk cleanup categories\n--open: open KeepItNew window\n--check: refresh cached counts\n--status: cached bar status')
+        print('system-update: update Arch + AUR + Flatpak\n--settings: interactive settings\n--cleanup: choose disk cleanup categories\n--open: open KeepItNew window\n--overview: run in the current terminal\n--check: refresh cached counts\n--status: cached bar status')
         return 0
     if arg not in ('','--interactive'):
         print('Unknown option; use --help',file=sys.stderr);return 2
-    return overview() if arg=='' else update_all(True)
+    if arg=='':
+        desktop=bool(os.environ.get('WAYLAND_DISPLAY') or os.environ.get('DISPLAY'))
+        if desktop and shutil.which('kitty') and os.environ.get('KEEPITNEW_WINDOW')!='1':
+            launch(overview=True);return 0
+        return overview()
+    return update_all(True)
 
 
 if __name__=='__main__':sys.exit(main())

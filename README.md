@@ -24,7 +24,7 @@ This installer includes only KeepItNew and its widgets. Choose a bar, theme and 
 
 ## Usage
 
-Run `keepitnew`. Local installs also provide `system-update` and the optional `update` alias. Select actions with arrows/Enter or the mouse. In **Free disk space**, choose a preset, toggle categories with Space or clicks, then select **Clean**. Unavailable tools are disabled.
+Run `keepitnew` to open its own desktop window; **Q** closes it. Use `keepitnew --overview` to run inside your current terminal instead. Without a desktop or Kitty, it stays in the current terminal. Local installs also provide `system-update` and the optional `update` alias. Select actions with arrows/Enter or the mouse. In **Free disk space**, choose a preset, toggle categories with Space or clicks, then select **Clean**. Unavailable tools are disabled.
 
 ## Settings
 
