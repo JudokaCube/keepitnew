@@ -39,7 +39,7 @@ def read_status():
     try:
         data=json.loads(STATUS.read_text())
         if not isinstance(data,dict) or not isinstance(data.get('sources'),dict):raise ValueError('Invalid cache')
-        if not isinstance(data.get('checked_at'),(int,float)):data['checked_at']=0
+        if type(data.get('checked_at')) not in (int,float) or not __import__('math').isfinite(data['checked_at']) or data['checked_at']<0:data['checked_at']=0
         for source in data['sources'].values():
             if not isinstance(source,dict):raise ValueError('Invalid source cache')
             count=source.get('count')
@@ -101,7 +101,7 @@ def source_enabled(name):
 def aur_check():
     helper = aur_helper()
     if not helper:
-        return []
+        raise RuntimeError('AUR checks need yay or paru; install one or turn off AUR checks in Settings')
     result = run_capture([helper,'-Qua','--color','never'])
     if result.returncode not in (0,1) or (result.returncode==1 and result.stderr.strip()):
         raise RuntimeError(result.stderr.strip() or 'AUR query failed')
@@ -296,7 +296,7 @@ def stage(label,args):
 
 def launch(overview=False):
     # The interactive runner keeps results visible until Enter is pressed.
-    command=['kitty','--class','system-update','--title','KeepItNew',
+    command=['kitty',*nord_theme.kitty_launch_options(),'--class','system-update','--title','KeepItNew',
              '-o','background=#'+nord_theme.palette()['background'],'-o','background_opacity='+str(nord_theme.opacity()),'-o','foreground=#'+nord_theme.palette()['text'],
              '-o','window_padding_width=22','-o','cursor=#'+nord_theme.palette()['accent'],'-o','selection_background=#'+nord_theme.palette()['surface'],SELF,'--overview' if overview else '--interactive']
     subprocess.Popen(command,start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

@@ -33,7 +33,7 @@ Choose **Settings** from the main menu. Use arrows for quick adjustments; Enter 
 - KeepItNew: AUR and Flatpak source toggles, preferred AUR helper, cached package versions, automatic checks, confirmations, reboot hints and cleanup presets.
 - Appearance: theme, opacity, borders, widget visibility and text. Noctalia also supports animation controls.
 
-Reopen the app after changing opacity. Widget changes appear after a short delay.
+Save applies opacity immediately in app-launched Kitty windows. Older windows need one relaunch from the widget or launcher. Other terminals control their own transparency. Widget changes appear after a short delay.
 
 ## Desktop bars
 
