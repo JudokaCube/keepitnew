@@ -330,6 +330,9 @@ def update_all(interactive=False):
             if helper:
                 results.append(('Arch + AUR',stage('03 / ARCH + AUR',[helper,'-Syu'] + (['--noconfirm'] if automatic else []) + (['--answerclean','None','--answerdiff','None','--answeredit','None','--answerupgrade','None'] if Path(helper).name=='yay' and automatic else []))))
             else:
+                if source_enabled('AUR'):
+                    print(paint('  ! AUR updates skipped: install yay/paru or turn off AUR in Settings.','yellow'))
+                    results.append(('AUR (no helper)',False))
                 results.append(('Arch',stage('03 / ARCH',['sudo','-n','pacman','-Syu']+(['--noconfirm'] if automatic else []))))
             if shutil.which('flatpak') and source_enabled('Flatpak (system)'):
                 results.append(('Flatpak system',stage('04 / FLATPAK · SYSTEM',['sudo','-n','flatpak','update','--system']+(['-y','--noninteractive'] if automatic else []))))
@@ -695,4 +698,8 @@ def main():
     return update_all(True)
 
 
-if __name__=='__main__':sys.exit(main())
+if __name__=='__main__':
+    try:sys.exit(main())
+    except (KeyboardInterrupt,EOFError):sys.exit(130)
+    except (OSError,ValueError) as exc:
+        print('KeepItNew: '+str(exc),file=sys.stderr);sys.exit(1)
