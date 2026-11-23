@@ -683,14 +683,13 @@ def main():
         nord_theme.reload_widgets()
         subprocess.run(['systemctl','--user','start','--no-block','system-update-check.service'],stdout=subprocess.DEVNULL)
         launch(overview=True);return 0
-    if arg=='--overview':return overview()
     if arg=='--cleanup':cleanup_menu();return 0
     if arg in ('-h','--help'):
-        print('system-update: update Arch + AUR + Flatpak\n--settings: interactive settings\n--cleanup: choose disk cleanup categories\n--open: open KeepItNew window\n--overview: run in the current terminal\n--check: refresh cached counts\n--status: cached bar status')
+        print('system-update: update Arch + AUR + Flatpak\n--settings: interactive settings\n--cleanup: choose disk cleanup categories\n--open: open KeepItNew window\n--overview: open the dashboard\n--check: refresh cached counts\n--status: cached bar status')
         return 0
-    if arg not in ('','--interactive'):
+    if arg not in ('','--overview','--interactive'):
         print('Unknown option; use --help',file=sys.stderr);return 2
-    if arg=='':
+    if arg in ('','--overview'):
         desktop=bool(os.environ.get('WAYLAND_DISPLAY') or os.environ.get('DISPLAY'))
         if desktop and shutil.which('kitty') and os.environ.get('KEEPITNEW_WINDOW')!='1':
             launch(overview=True);return 0
