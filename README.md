@@ -24,7 +24,7 @@ This installer includes only KeepItNew and its widgets. Choose a bar, theme and 
 
 ## Usage
 
-Run `keepitnew` or `keepitnew --overview` in the current terminal. **Q / Esc** exits the dashboard; Esc goes back from menus. Optional shell shortcuts replace the shell for dashboard launches, so exiting closes that terminal. Use `keepitnew --open` for a separate window. Local installs also provide `system-update` and the optional `update` alias. Select actions with arrows/Enter or the mouse. In **Free disk space**, choose a preset, toggle categories with Space or clicks, then select **Clean**. Unavailable tools are disabled.
+Run `keepitnew` or `keepitnew --overview` in the current terminal. **Q / Esc** exits the dashboard; Esc goes back from menus. Settings → **When leaving app** chooses **Close terminal** or **Return to terminal**, including widget launches. Use `keepitnew --open` for a separate window. Local installs also provide `system-update` and the optional `update` alias. Select actions with arrows/Enter or the mouse. In **Free disk space**, choose a preset, toggle categories with Space or clicks, then select **Clean**. Unavailable tools are disabled.
 
 ## App updates
 
@@ -32,7 +32,7 @@ Choose **Check for app updates** on the main menu. Review the release notes, the
 
 ## Settings
 
-Choose **Settings** from the main menu. Use arrows for quick adjustments; Enter or a click opens choices. **Save / Ctrl+S** applies changes; **Esc** discards unsaved changes.
+Choose **Settings** from the main menu. Unexpected errors stay on screen with a **Copy details** button (wl-clipboard or xclip); review copied details before sharing. Use arrows for quick adjustments; Enter or a click opens choices. **Save / Ctrl+S** applies changes; **Esc** discards unsaved changes.
 
 - KeepItNew: AUR and Flatpak source toggles, preferred AUR helper, cached package versions, automatic checks, confirmations, reboot hints and cleanup presets.
 - Appearance: theme, opacity, borders, widget visibility and text. Noctalia also supports animation controls.

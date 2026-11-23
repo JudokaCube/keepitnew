@@ -695,7 +695,5 @@ def main():
 
 
 if __name__=='__main__':
-    try:sys.exit(main())
-    except (KeyboardInterrupt,EOFError):sys.exit(130)
-    except (OSError,ValueError) as exc:
-        print('KeepItNew: '+str(exc),file=sys.stderr);sys.exit(1)
+    interactive=(not sys.argv[1:] or sys.argv[1] in ('--overview','--settings','--cleanup','--interactive'))
+    sys.exit(nord_theme.run_application(main,interactive))

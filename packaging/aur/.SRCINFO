@@ -1,6 +1,6 @@
 pkgbase = keepitnew
 	pkgdesc = Arch, AUR and Flatpak update dashboard and disk cleanup
-	pkgver = 0.1.7
+	pkgver = 0.1.8
 	pkgrel = 1
 	url = https://github.com/JudokaCube/keepitnew
 	arch = any
@@ -18,7 +18,7 @@ pkgbase = keepitnew
 	optdepends = waybar: optional desktop bar
 	optdepends = quickshell: optional Caelestia widget
 	optdepends = qt6-declarative: optional Caelestia QML integration
-	source = keepitnew-0.1.7.tar.gz::https://github.com/JudokaCube/keepitnew/releases/download/v0.1.7/keepitnew-0.1.7.tar.gz
-	sha256sums = 7b1a5430643e59cc242f762c2d832ca568360d4e687d3acb09a65baa6009acaa
+	source = keepitnew-0.1.8.tar.gz::https://github.com/JudokaCube/keepitnew/releases/download/v0.1.8/keepitnew-0.1.8.tar.gz
+	sha256sums = 5d76c8cec32f6ce7023cf91e3ffdc2688f68e87d7df4bd6dd161f8fa8e6794bb
 
 pkgname = keepitnew
