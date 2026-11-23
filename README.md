@@ -24,7 +24,7 @@ This installer includes only KeepItNew and its widgets. Choose a bar, theme and 
 
 ## Usage
 
-Run `keepitnew` or `keepitnew --overview` to open its own desktop window; **Q / Esc** closes the dashboard. Esc goes back from menus. Without a desktop or Kitty, it stays in the current terminal. Local installs also provide `system-update` and the optional `update` alias. Select actions with arrows/Enter or the mouse. In **Free disk space**, choose a preset, toggle categories with Space or clicks, then select **Clean**. Unavailable tools are disabled.
+Run `keepitnew` or `keepitnew --overview` in the current terminal. **Q / Esc** exits the dashboard; Esc goes back from menus. Optional shell shortcuts replace the shell for dashboard launches, so exiting closes that terminal. Use `keepitnew --open` for a separate window. Local installs also provide `system-update` and the optional `update` alias. Select actions with arrows/Enter or the mouse. In **Free disk space**, choose a preset, toggle categories with Space or clicks, then select **Clean**. Unavailable tools are disabled.
 
 ## App updates
 

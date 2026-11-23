@@ -1,6 +1,6 @@
 # Maintainer: jdkcube
 pkgname=keepitnew
-pkgver=0.1.6
+pkgver=0.1.7
 pkgrel=1
 pkgdesc='Arch, AUR and Flatpak update dashboard and disk cleanup'
 arch=('any')
@@ -8,8 +8,8 @@ url='https://github.com/JudokaCube/keepitnew'
 license=('MIT')
 depends=('python>=3.11' 'kitty' 'systemd' 'pacman' 'fakeroot' 'sudo')
 optdepends=('flatpak: optional Flatpak updates and cleanup' 'pacman-contrib: update checks and package-cache cleanup' 'yay: AUR updates' 'paru: alternative AUR helper' 'waybar: optional desktop bar' 'quickshell: optional Caelestia widget' 'qt6-declarative: optional Caelestia QML integration')
-source=('keepitnew-0.1.6.tar.gz::https://github.com/JudokaCube/keepitnew/releases/download/v0.1.6/keepitnew-0.1.6.tar.gz')
-sha256sums=('c2321651f55a0340bfb8ea8b93139c40a128b7a70641bcb6d8c1d683525ac5be')
+source=('keepitnew-0.1.7.tar.gz::https://github.com/JudokaCube/keepitnew/releases/download/v0.1.7/keepitnew-0.1.7.tar.gz')
+sha256sums=('7b1a5430643e59cc242f762c2d832ca568360d4e687d3acb09a65baa6009acaa')
 
 check() {
     python - "$srcdir/$pkgname-$pkgver" <<'PY'
@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory() as temp:
     env=dict(os.environ,HOME=temp,XDG_CONFIG_HOME=temp+'/config',XDG_DATA_HOME=temp+'/data',XDG_CACHE_HOME=temp+'/cache',XDG_STATE_HOME=temp+'/state',PYTHONDONTWRITEBYTECODE='1')
     command=[sys.executable,str(root/'bin/system-update')]
     version=subprocess.check_output(command+['--version'],env=env,text=True)
-    assert '0.1.6' in version,version
+    assert '0.1.7' in version,version
     args=['status','--waybar'] if 'keepitnew'=='studentdaily' else ['--waybar']
     status=json.loads(subprocess.check_output(command+args,env=env,text=True))
     assert isinstance(status,dict) and 'text' in status
